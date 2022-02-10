@@ -14,14 +14,14 @@ let ctx = c.getContext("2d");
 let imgData = ctx.createImageData(256, 240);
 
 let controlsP1 = {
-  arrowright: nes.INPUT.RIGHT,
-  arrowleft: nes.INPUT.LEFT,
-  arrowdown: nes.INPUT.DOWN,
-  arrowup: nes.INPUT.UP,
+  d: nes.INPUT.RIGHT,
+  a: nes.INPUT.LEFT,
+  s: nes.INPUT.DOWN,
+  w: nes.INPUT.UP,
   enter: nes.INPUT.START,
   shift: nes.INPUT.SELECT,
-  a: nes.INPUT.B,
-  z: nes.INPUT.A
+  arrowdown: nes.INPUT.B,
+  arrowleft: nes.INPUT.A
 }
 let controlsP2 = {
   l: nes.INPUT.RIGHT,
