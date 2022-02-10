@@ -18,20 +18,22 @@ let controlsP1 = {
   a: nes.INPUT.LEFT,
   s: nes.INPUT.DOWN,
   w: nes.INPUT.UP,
-  enter: nes.INPUT.START,
-  shift: nes.INPUT.SELECT,
-  arrowdown: nes.INPUT.B,
-  arrowleft: nes.INPUT.A
-}
-let controlsP2 = {
-  l: nes.INPUT.RIGHT,
-  j: nes.INPUT.LEFT,
-  k: nes.INPUT.DOWN,
-  i: nes.INPUT.UP,
   p: nes.INPUT.START,
   o: nes.INPUT.SELECT,
-  t: nes.INPUT.B,
-  g: nes.INPUT.A
+  l: nes.INPUT.B,
+  k: nes.INPUT.A,
+  spacebar: nes.INPUT.A,
+  shift: nes.INPUT.B
+}
+let controlsP2 = {
+  d: nes.INPUT.RIGHT,
+  a: nes.INPUT.LEFT,
+  s: nes.INPUT.DOWN,
+  w: nes.INPUT.UP,
+  p: nes.INPUT.START,
+  o: nes.INPUT.SELECT,
+  l: nes.INPUT.B,
+  k: nes.INPUT.A
 }
 
 zip.workerScriptsPath = "lib/";
