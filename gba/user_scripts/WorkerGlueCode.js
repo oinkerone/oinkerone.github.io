@@ -1,6 +1,6 @@
 "use strict";
 /*
- Copyright (C) 2012-2015 Grant Galitz
+ Copyright (C) 2012-2019 Grant Galitz
 
  Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
 
@@ -9,19 +9,20 @@
  THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
  */
 function IodineGBAWorkerShim() {
+	this.playStatus = null;
     this.gfx = null;
     this.audio = null;
     this.speed = null;
     this.saveExport = null;
     this.saveImport = null;
     this.worker = null;
-    this.graphicsBufferShared = null;
-    this.graphicsBufferShared2 = null;
-    this.graphicsBufferCount = null;
-    this.graphicsLock = null;
+    this.gfxBuffers = null;
+    this.gfxCounters = null;
     this.audioBuffer = null;
-    this.audioLock = null;
-    this.audioMetrics = null;
+    this.audioCounters = null;
+    this.audioSamplesRemaining = null;
+    this.audioBufferSize = 0;
+    this.audioBufferSizeMask = 0;
     this.audioInitialized = false;
     this.timestamp = null;
     this.initialize();
@@ -30,7 +31,10 @@ var tempvar = document.getElementsByTagName("script");
 IodineGBAWorkerShim.prototype.filepath = tempvar[tempvar.length-1].src;
 IodineGBAWorkerShim.prototype.initialize = function () {
     var parentObj = this;
-    this.worker = new Worker(this.filepath.substring(0, (this.filepath.length | 0) - 3) + "Worker.js");
+    var loc = this.filepath.split("/");
+    loc = loc.slice(0, loc.length - 2).join("/");
+    loc += "/IodineGBA/core/Worker.js";
+    this.worker = new Worker(loc);
     this.worker.onmessage = function (event) {
         parentObj.decodeMessage(event.data);
     }
@@ -43,10 +47,6 @@ IodineGBAWorkerShim.prototype.sendMessageDouble = function (eventCode, eventData
     eventCode = eventCode | 0;
     this.worker.postMessage({messageID:eventCode, payload:eventData});
 }
-IodineGBAWorkerShim.prototype.sendBufferBack = function (eventCode, eventData) {
-    eventCode = eventCode | 0;
-    this.worker.postMessage({messageID:eventCode, payload:eventData}, [eventData.buffer]);
-}
 IodineGBAWorkerShim.prototype.play = function () {
     this.sendMessageSingle(0);
 }
@@ -57,8 +57,8 @@ IodineGBAWorkerShim.prototype.restart = function () {
     this.sendMessageSingle(2);
 }
 IodineGBAWorkerShim.prototype.setIntervalRate = function (rate) {
-    rate = rate | 0;
-    this.sendMessageDouble(3, rate | 0);
+    rate = +rate;
+    this.sendMessageDouble(3, +rate);
 }
 IodineGBAWorkerShim.prototype.timerCallback = function (timestamp) {
     timestamp = timestamp >>> 0;
@@ -67,12 +67,16 @@ IodineGBAWorkerShim.prototype.timerCallback = function (timestamp) {
         //Forward latest timestamp to worker:
         Atomics.store(this.timestamp, 0, timestamp >>> 0);
     }
-    //Run some checks for graphics:
-    if (this.gfx && this.graphicsLock) {
-        if (Atomics.load(this.gfxCount, 0) > 0) {
-            this.graphicsHeartBeat();
-        }
-    }
+}
+IodineGBAWorkerShim.prototype.attachPlayStatusHandler = function (playStatus) {
+	this.playStatus = playStatus;
+    this.sendMessageSingle(23);
+}
+IodineGBAWorkerShim.prototype.issuePlayStatus = function (isPlaying) {
+    isPlaying = isPlaying | 0;
+	if (this.playStatus) {
+		this.playStatus(isPlaying | 0);
+	}
 }
 IodineGBAWorkerShim.prototype.attachGraphicsFrameHandler = function (gfx) {
     this.gfx = gfx;
@@ -103,6 +107,10 @@ IodineGBAWorkerShim.prototype.toggleSkipBootROM = function (doEnable) {
 IodineGBAWorkerShim.prototype.toggleDynamicSpeed = function (doEnable) {
     doEnable = doEnable | 0;
     this.sendMessageDouble(9, doEnable | 0);
+}
+IodineGBAWorkerShim.prototype.toggleOffthreadGraphics = function (doEnable) {
+    doEnable = doEnable | 0;
+    this.sendMessageDouble(22, doEnable | 0);
 }
 IodineGBAWorkerShim.prototype.attachSpeedHandler = function (speed) {
     this.speed = speed;
@@ -144,34 +152,34 @@ IodineGBAWorkerShim.prototype.attachSaveImportHandler = function (saveImport) {
 IodineGBAWorkerShim.prototype.decodeMessage = function (data) {
     switch (data.messageID | 0) {
         case 0:
-            this.buffersInitialize(data.graphicsBuffer, data.graphicsBuffer2, data.gfxCount, data.gfxLock, data.audioLock, data.audioMetrics, data.timestamp);
+            this.buffersInitialize(data.gfxBuffer1, data.gfxBuffer2, data.gfxCounters, data.audioSamplesRemaining, data.timestamp);
             break;
         case 1:
-            this.audioBufferPush(data.audioBuffer);
+            this.audioInitialize(data.channels | 0, +data.sampleRate, data.bufferLimit | 0, data.audioBuffer, data.audioCounters);
             break;
         case 2:
-            this.audioInitialize(data.channels | 0, +data.sampleRate, data.bufferLimit | 0, data.audioBuffer);
-            break;
-        case 3:
             this.audioRegister();
             break;
-        case 4:
+        case 3:
             this.audioUnregister();
             break;
-        case 5:
+        case 4:
             this.audioSetBufferSpace(data.audioBufferContainAmount | 0);
             break;
-        case 6:
+        case 5:
             this.saveImportRequest(data.saveID);
             break;
-        case 7:
+        case 6:
             this.saveExportRequest(data.saveID, data.saveData);
             break;
-        default:
+        case 7:
             this.speedPush(+data.speed);
+			break;
+		default:
+			this.issuePlayStatus(data.playing | 0);
     }
 }
-IodineGBAWorkerShim.prototype.audioInitialize = function (channels, sampleRate, bufferLimit) {
+IodineGBAWorkerShim.prototype.audioInitialize = function (channels, sampleRate, bufferLimit, audioBuffer, audioCounters) {
     channels = channels | 0;
     sampleRate = +sampleRate;
     bufferLimit = bufferLimit | 0;
@@ -190,63 +198,86 @@ IodineGBAWorkerShim.prototype.audioInitialize = function (channels, sampleRate, 
         });
         this.audioInitialized = true;
     }
-}
-IodineGBAWorkerShim.prototype.audioBufferPush = function (audioBuffer) {
     //Grab the new buffer:
     this.audioBuffer = audioBuffer;
+    this.audioCounters = audioCounters;
+    this.audioBufferSize = audioBuffer.length | 0;
+    this.audioBufferSizeMask = ((this.audioBufferSize | 0) - 1) | 0;
 }
 IodineGBAWorkerShim.prototype.audioHeartBeat = function () {
     //If audio API handle provided and we got a buffer reference:
     if (this.audioInitialized) {
-        //Waits while locked:
-        this.waitForAccess(this.audioLock);
-        //Check to make sure we can consume the buffer:
-        if (this.isConsumable(this.audioLock)) {
-            //Empty the buffer out:
-            this.consumeAudioBuffer();
-        }
-        //Give accurate sample count prior to lock release:
-        this.audioPostHeartBeat();
-        //Free up access to the buffer:
-        this.releaseLock(this.audioLock);
-        //Tell audio mixer input to flush to audio mixer:
-        this.audio.flush();
+        //Empty the buffer out:
+        this.consumeAudioBuffer();
     }
 }
 IodineGBAWorkerShim.prototype.consumeAudioBuffer = function () {
+    //Load the counter values:
+    var start = this.audioCounters[0] | 0;                //Written by this thread.
+    var end = Atomics.load(this.audioCounters, 1) | 0;    //Written to by the other thread.
+    //Don't process if nothing to process:
+    if ((end | 0) == (start | 0)) {
+        //Buffer is empty:
+        return;
+    }
+    //Copy samples out from the ring buffer:
+    this.copyAudioBuffer(start | 0, end | 0);
+    //Update the sample count reported by the audio mixer:
+    //Done before updating ring buffer counter, so we don't over-produce:
+    this.audioPostHeartBeat();
+    //Update the starting position counter to match the end position:
+    //Atomic store, because the sample count by the audio system needs to be reported prior to this:
+    Atomics.store(this.audioCounters, 0, end | 0);
+    //Tell audio mixer input to flush to audio mixer:
+    this.audio.flush();
+}
+IodineGBAWorkerShim.prototype.copyAudioBuffer = function (start, end) {
+    start = start | 0;
+    end = end | 0;
+    //Compute the positions in the ring buffer:
+    var startCorrected = ((start | 0) & (this.audioBufferSizeMask | 0)) | 0;
+    var endCorrected = ((end | 0) & (this.audioBufferSizeMask | 0)) | 0;
     //Copy samples out to audio mixer input (but don't process them yet):
-    this.audio.pushDeferred(this.audioBuffer, this.audioMetrics[1] | 0);
-    //Set in flight sample count across thread boundary to zero:
-    this.audioMetrics[1] = 0;
+    if ((startCorrected | 0) >= (endCorrected | 0)) {
+        //Handle looping to start of buffer:
+        this.audio.pushDeferred(this.audioBuffer, startCorrected | 0, this.audioBufferSize | 0);
+        this.audio.pushDeferred(this.audioBuffer, 0, endCorrected | 0);
+    }
+    else {
+        this.audio.pushDeferred(this.audioBuffer, startCorrected | 0, endCorrected | 0);
+    }
 }
 IodineGBAWorkerShim.prototype.audioPostHeartBeat = function () {
     //Push latest audio metrics with no buffering:
-    Atomics.store(this.audioMetrics, 0, this.audio.remainingBuffer() | 0);
+    this.audioSamplesRemaining[0] = this.audio.remainingBuffer() | 0;
 }
 IodineGBAWorkerShim.prototype.graphicsHeartBeat = function () {
     //If graphics callback handle provided and we got a buffer reference:
-    if (this.gfx && this.graphicsLock) {
-        //Waits while locked:
-        this.waitForAccess(this.graphicsLock);
-        //Check to make sure we can consume the buffer:
-        if (this.isConsumable(this.graphicsLock)) {
-            //Copy the buffer out to local:
-            this.consumeGraphicsBuffer();
-        }
-        //Free up access to the buffer:
-        this.releaseLock(this.graphicsLock);
+    if (this.gfx && this.gfxCounters) {
+        //Copy the buffer out to local:
+        this.consumeGraphicsBuffer();
+        //Wake up the producer thread:
+        Atomics.notify(this.gfxCounters, 2, 1);
     }
 }
 IodineGBAWorkerShim.prototype.consumeGraphicsBuffer = function () {
-    switch (this.gfxCount[0]) {
-        case 1:
-            this.gfx.copyBuffer(this.graphicsBufferShared);
-            break;
-        case 2:
-            this.gfx.copyBuffer(this.graphicsBufferShared);
-            this.gfx.copyBuffer(this.graphicsBufferShared2);
+    //Load the counter values:
+    var start = this.gfxCounters[0] | 0;              //Written by this thread.
+    var end = Atomics.load(this.gfxCounters, 1) | 0;  //Written by the other thread.
+    //Don't process if nothing to process:
+    if ((end | 0) == (start | 0)) {
+        //Buffer is empty:
+        return;
     }
-    this.gfxCount[0] = 0;
+    //Copy samples out from the ring buffer:
+    do {
+        //Hardcoded for 2 buffers for a triple buffer effect:
+        this.gfx.copyBuffer(this.gfxBuffers[start & 0x1]);
+        start = ((start | 0) + 1) | 0;
+    } while ((start | 0) != (end | 0));
+    //Update the starting position counter to match the end position:
+    //Let the other Atomic loads/stores naturally flush this value:
+    this.gfxCounters[0] = end | 0;
 }
 IodineGBAWorkerShim.prototype.audioRegister = function () {
     if (this.audio) {
@@ -267,13 +298,10 @@ IodineGBAWorkerShim.prototype.audioSetBufferSpace = function (bufferSpace) {
         this.audio.setBufferSpace(bufferSpace | 0);
     }
 }
-IodineGBAWorkerShim.prototype.buffersInitialize = function (graphicsBuffer, graphicsBuffer2, gfxCount, gfxLock, audioLock, audioMetrics, timestamp) {
-    this.graphicsBufferShared = graphicsBuffer;
-    this.graphicsBufferShared2 = graphicsBuffer2;
-    this.gfxCount = gfxCount;
-    this.graphicsLock = gfxLock;
-    this.audioLock = audioLock;
-    this.audioMetrics = audioMetrics;
+IodineGBAWorkerShim.prototype.buffersInitialize = function (gfxBuffer1, gfxBuffer2, gfxCounters, audioSamplesRemaining, timestamp) {
+    this.gfxBuffers = [gfxBuffer1, gfxBuffer2];
+    this.gfxCounters = gfxCounters;
+    this.audioSamplesRemaining = audioSamplesRemaining;
     this.timestamp = timestamp;
 }
 IodineGBAWorkerShim.prototype.speedPush = function (speed) {
@@ -297,23 +325,4 @@ IodineGBAWorkerShim.prototype.saveExportRequest = function (saveID, saveData) {
     if (this.saveExport) {
         this.saveExport(saveID, saveData);
     }
-}
-IodineGBAWorkerShim.prototype.waitForAccess = function (buffer) {
-    //Check if the other thread locked access (And mark as locked):
-    while (Atomics.exchange(buffer, 0, 1) == 1) {
-        //Wait for other thread to release lock:
-        Atomics.futexWait(buffer, 0, 1);
-    }
-}
-IodineGBAWorkerShim.prototype.releaseLock = function (buffer) {
-    //Mark as consumed:
-    buffer[1] = 0;
-    //Unlock:
-    Atomics.store(buffer, 0, 0);
-    Atomics.futexWake(buffer, 0, 1);
-    Atomics.futexWake(buffer, 1, 1);
-}
-IodineGBAWorkerShim.prototype.isConsumable = function (buffer) {
-    //If the buffer hasn't been consumed yet, it'll be 1 here:
-    return (buffer[1] == 1);
 }
