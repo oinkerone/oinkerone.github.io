@@ -1,0 +1,15 @@
+.header{
+    border-style:dotted;
+    border-color:yellow;
+    font-family:Arial;
+}
+
+.navigation{
+    float:left;
+    border:3px;
+    width:20%
+}
+
+body{
+    background-color:lightcyan;
+}
